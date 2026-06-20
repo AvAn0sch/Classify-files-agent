@@ -1,5 +1,7 @@
 # Classify-files-agent
 
+**English** | [简体中文](README.zh-CN.md)
+
 Intelligent document processing agent — classify, search, and answer questions about your documents.
 
 ## Features
