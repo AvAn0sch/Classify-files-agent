@@ -46,7 +46,7 @@ llm:
   temperature: 0.0
 
 api_keys:
-  tavily: tvly-...                         # For web search
+  tavily: tvly-...                         # For web search, get key at https://app.tavily.com/
 ```
 
 ### Supported LLM Providers

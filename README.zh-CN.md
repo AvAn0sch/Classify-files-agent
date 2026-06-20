@@ -46,7 +46,7 @@ llm:
   temperature: 0.0
 
 api_keys:
-  tavily: tvly-...                         # 联网搜索密钥
+  tavily: tvly-...                         # 联网搜索密钥，在 https://app.tavily.com/ 获取
 ```
 
 ### 支持的大模型厂商
