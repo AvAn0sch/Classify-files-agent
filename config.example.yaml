@@ -1,0 +1,50 @@
+# create-agent configuration template
+# Copy this file to config.yaml and fill in your settings.
+#
+# API keys use ${ENV_VAR} syntax to read from environment variables.
+# You can also put the key directly (not recommended for security).
+
+# ── LLM Provider ────────────────────────────────────
+llm:
+  provider: anthropic              # Currently only "anthropic" is supported
+  model: claude-opus-4-8           # Claude model to use
+  # Other good options: claude-sonnet-4-6 (faster/cheaper), claude-fable-5 (most capable)
+  max_tokens: 16000                # Max output tokens per response
+  thinking:                        # Extended thinking config (Opus 4.8+)
+    type: adaptive                 # "adaptive" lets Claude decide when to think
+  output_config:
+    effort: high                   # low | medium | high | xhigh | max
+
+# ── API Keys ────────────────────────────────────────
+# Set these as environment variables and reference them with ${VAR_NAME}
+api_keys:
+  anthropic: ${ANTHROPIC_API_KEY}  # Required: your Anthropic API key
+  tavily: ${TAVILY_API_KEY}        # Required for web search: your Tavily API key
+
+# ── Tool Configuration ──────────────────────────────
+tools:
+  web_search:
+    enabled: true                  # Set to false to disable web search
+    max_results: 5                 # Default results per search (1-20)
+    include_domains: []            # Restrict search to these domains (optional)
+    exclude_domains: []            # Block these domains from results (optional)
+
+  classification:
+    batch_size: 10                 # Documents per structured-output call
+    confidence_threshold: low      # Minimum confidence to auto-classify
+    max_chars_per_doc: 8000        # Truncate document text for classification
+
+# ── Extraction Settings ─────────────────────────────
+extraction:
+  pdf_library: pdfplumber          # pdfplumber (recommended) or pymupdf
+  max_chars_per_doc: 50000         # Hard cap on total extracted characters
+  supported_extensions:            # File types to process
+    - .docx
+    - .pptx
+    - .pdf
+
+# ── Agent Behavior ──────────────────────────────────
+agent:
+  max_iterations: 20               # Max tool-calling loop iterations
+  verbose: false                   # Show detailed tool execution logs
+  stream_output: true              # Stream LLM responses to terminal
