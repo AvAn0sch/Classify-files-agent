@@ -1,9 +1,9 @@
-"""Abstract base classes for agent tools."""
+"""Abstract base classes for agent tools — OpenAI-compatible format."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -34,6 +34,7 @@ class BaseTool(ABC):
     """Abstract base class for all agent tools.
 
     Each tool must define: name, description, input_schema, and execute().
+    Tools are serialized to OpenAI's function-calling format.
     """
 
     @property
@@ -47,7 +48,6 @@ class BaseTool(ABC):
     def description(self) -> str:
         """Human-readable description of what the tool does AND when to use it.
 
-        Follow Claude best practice: state the function and the trigger condition.
         Example: "Extract text from a document. Call this when you need to read
         document content before classifying, searching, or analyzing it."
         """
@@ -82,10 +82,13 @@ class BaseTool(ABC):
         """
         ...
 
-    def to_claude_format(self) -> dict[str, Any]:
-        """Convert to Anthropic API tool definition format."""
+    def to_openai_format(self) -> dict[str, Any]:
+        """Convert to OpenAI function-calling tool definition format."""
         return {
-            "name": self.name,
-            "description": self.description,
-            "input_schema": self.input_schema,
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.input_schema,
+            },
         }

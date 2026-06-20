@@ -1,22 +1,18 @@
-"""CLI command definitions using Click."""
+"""Agent initialization and interactive chat loop."""
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
-import anthropic
+from openai import OpenAI
 
 from create_agent.agent.core import Agent
 from create_agent.cli.display import (
     console,
     print_banner,
-    print_classification_table,
     print_error,
     print_info,
-    print_search_results,
-    print_success,
 )
 from create_agent.config.loader import load_config
 from create_agent.tools.classifier import ClassifyDocumentsTool
@@ -32,26 +28,30 @@ def _build_agent(config_path: str | None = None) -> Agent:
     """Initialize the agent with all tools based on configuration.
 
     Args:
-        config_path: Optional path to config file.
+        config_path: Optional path to config.yaml.
 
     Returns:
         Configured Agent instance.
     """
     config = load_config(config_path)
 
-    # Initialize Anthropic client
-    if not config.api_keys.anthropic:
+    # Resolve API key: config value first, then env var
+    api_key = config.llm.api_key or config.api_keys.openai
+    if not api_key:
         print_error(
-            "ANTHROPIC_API_KEY is not set. Set it as an environment variable "
-            "or in config.yaml (api_keys.anthropic)."
+            "OPENAI_API_KEY is not set. Set it as an environment variable "
+            "or in config.yaml (llm.api_key or api_keys.openai)."
         )
         sys.exit(1)
 
-    client = anthropic.Anthropic(api_key=config.api_keys.anthropic)
+    # Initialize OpenAI-compatible client
+    client = OpenAI(
+        base_url=config.llm.base_url,
+        api_key=api_key,
+    )
 
     # Build tool registry
     registry = ToolRegistry()
-
     registry.register(
         FileScannerTool(supported_extensions=config.extraction.supported_extensions)
     )
@@ -92,118 +92,48 @@ def _build_agent(config_path: str | None = None) -> Agent:
         )
     )
 
-    # Create agent
     return Agent(
         client=client,
         tools=registry,
         model=config.llm.model,
         max_tokens=config.llm.max_tokens,
+        temperature=config.llm.temperature,
         max_iterations=config.agent.max_iterations,
         verbose=config.agent.verbose,
         stream_output=config.agent.stream_output,
     )
 
 
-def run_classify(folder: str, categories: str, config_path: str | None = None) -> None:
-    """Run document classification.
+def start_chat(config_path: str | None = None) -> None:
+    """Start an interactive chat session with the agent.
 
-    Args:
-        folder: Path to the folder containing documents.
-        categories: Comma-separated category names.
+    This is the main entry point. Run `python main.py` to start.
     """
     print_banner()
-    print_info(f"Folder: {folder}")
-    print_info(f"Categories: {categories}")
 
-    agent = _build_agent(config_path)
+    # Locate config
+    if config_path is None:
+        cwd_config = Path("config.yaml")
+        if cwd_config.exists():
+            config_path = str(cwd_config)
 
-    task = (
-        f"Please classify all documents in '{folder}' into these categories: {categories}.\n\n"
-        f"Steps:\n"
-        f"1. Scan the folder with scan_folder\n"
-        f"2. Extract text from all documents with extract_document_text\n"
-        f"3. Classify all documents with classify_documents\n"
-        f"4. Organize files into category sub-folders with organize_files\n"
-        f"5. Show me a summary of the classification results"
-    )
-
-    console.print("\n[bold]Agent is working...[/bold]\n")
-
-    result = agent.run(task)
-
-    if result.success:
-        console.print(f"\n[bold]Result:[/bold]\n{result.final_message}")
-        console.print(
-            f"\n[dim]Completed in {result.iterations} iterations, "
-            f"{result.tool_calls_made} tool calls.[/dim]"
+    try:
+        agent = _build_agent(config_path)
+    except FileNotFoundError as e:
+        print_error(str(e))
+        print_info(
+            "Copy config.example.yaml to config.yaml and set your API keys:\n"
+            "  cp config.example.yaml config.yaml\n"
+            "  set OPENAI_API_KEY=sk-..."
         )
-    else:
-        print_error(result.error or "Unknown error")
+        return
 
-
-def run_search(query: str, max_results: int, config_path: str | None = None) -> None:
-    """Run web search.
-
-    Args:
-        query: Search query string.
-        max_results: Maximum number of results.
-    """
-    print_banner()
-    print_info(f"Search query: {query}")
-
-    agent = _build_agent(config_path)
-
-    task = (
-        f"Search the web for: {query}\n\n"
-        f"Use the web_search tool with max_results={max_results}. "
-        f"After getting results, synthesize them into a clear, concise answer."
-    )
-
-    console.print("\n[bold]Searching...[/bold]\n")
-
-    result = agent.run(task)
-
-    if result.success:
-        console.print(f"\n[bold]Answer:[/bold]\n{result.final_message}")
-    else:
-        print_error(result.error or "Unknown error")
-
-
-def run_ask(folder: str, question: str, config_path: str | None = None) -> None:
-    """Ask a question about documents.
-
-    Args:
-        folder: Path to the folder containing documents.
-        question: Question to answer.
-    """
-    print_banner()
-    print_info(f"Folder: {folder}")
-    print_info(f"Question: {question}")
-
-    agent = _build_agent(config_path)
-
-    task = (
-        f"In the folder '{folder}', answer this question: {question}\n\n"
-        f"Use the search_documents tool to search through the documents "
-        f"and find the answer. Present the answer with document references."
-    )
-
-    console.print("\n[bold]Searching documents...[/bold]\n")
-
-    result = agent.run(task)
-
-    if result.success:
-        console.print(f"\n[bold]Answer:[/bold]\n{result.final_message}")
-    else:
-        print_error(result.error or "Unknown error")
-
-
-def run_chat(config_path: str | None = None) -> None:
-    """Start an interactive chat session with the agent."""
-    print_banner()
-    print_info("Interactive chat mode. Type 'exit' or 'quit' to stop.\n")
-
-    agent = _build_agent(config_path)
+    console.print("\n[bold green]Agent ready. Type your request or 'exit' to quit.[/bold green]")
+    console.print("[dim]Examples:[/dim]")
+    console.print("  [dim]• 帮我把 ./docs 里的文件按合同、报告、发票分类[/dim]")
+    console.print("  [dim]• 搜索最新的 AI 法规进展[/dim]")
+    console.print("  [dim]• Q4 营收报告里关于成本的内容是什么？[/dim]")
+    console.print()
 
     while True:
         try:
@@ -222,6 +152,10 @@ def run_chat(config_path: str | None = None) -> None:
         result = agent.run(user_input)
 
         if result.success:
-            console.print(f"[bold green]Agent:[/bold green] {result.final_message}\n")
+            if result.final_message:
+                console.print(f"[bold green]Agent:[/bold green] {result.final_message}\n")
+            console.print(
+                f"[dim]({result.iterations} iterations, {result.tool_calls_made} tool calls)[/dim]\n"
+            )
         else:
             print_error(result.error or "Unknown error")

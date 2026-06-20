@@ -1,8 +1,8 @@
-"""Classify documents using Claude Structured Output.
+"""Classify documents using OpenAI-compatible structured output.
 
 This tool is a HYBRID: from the agent's perspective it's a normal tool,
-but internally it uses the Claude API with structured output to batch-classify
-documents with guaranteed JSON schema compliance.
+but internally it uses the LLM API with structured output (JSON schema)
+to batch-classify documents with guaranteed format compliance.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from create_agent.tools.base import BaseTool, ToolResult
 
 if TYPE_CHECKING:
-    import anthropic
+    from openai import OpenAI
 
 CLASSIFICATION_SCHEMA = {
     "type": "object",
@@ -50,16 +50,16 @@ CLASSIFICATION_SCHEMA = {
 
 
 class ClassifyDocumentsTool(BaseTool):
-    """Classify documents into user-defined categories using Claude.
+    """Classify documents into user-defined categories using LLM structured output.
 
-    Makes an internal Claude API call with structured output to batch-classify
+    Makes internal LLM API calls with JSON schema response_format to batch-classify
     documents. The agent sees this as a single tool call, but internally it
-    batches documents, calls Claude with a JSON schema, and returns structured results.
+    batches documents, calls the LLM with a JSON schema, and returns structured results.
     """
 
     def __init__(
         self,
-        client: "anthropic.Anthropic",
+        client: "OpenAI",
         model: str,
         batch_size: int = 10,
         max_chars_per_doc: int = 8000,
@@ -126,14 +126,12 @@ class ClassifyDocumentsTool(BaseTool):
 
         all_classifications: list[dict] = []
 
-        # Batch documents to stay within token limits
         for i in range(0, len(documents), self._batch_size):
             batch = documents[i : i + self._batch_size]
             try:
                 batch_results = self._classify_batch(batch, categories)
                 all_classifications.extend(batch_results)
             except Exception as e:
-                # Mark batch as failed but continue
                 for doc in batch:
                     all_classifications.append(
                         {
@@ -153,8 +151,7 @@ class ClassifyDocumentsTool(BaseTool):
         )
 
     def _classify_batch(self, documents: list[dict], categories: list[str]) -> list[dict]:
-        """Internal call to Claude using structured output."""
-        # Build the prompt with document contents
+        """Internal call to LLM using structured output (JSON schema)."""
         doc_sections: list[str] = []
         category_list = ", ".join(categories)
 
@@ -168,34 +165,38 @@ class ClassifyDocumentsTool(BaseTool):
 
         doc_text = "\n".join(doc_sections)
 
-        response = self._client.messages.create(
+        response = self._client.chat.completions.create(
             model=self._model,
             max_tokens=4000,
-            system=(
-                "You are a precise document classifier. Classify each document into "
-                "exactly ONE of the provided categories. Consider: main topic, "
-                "key terminology, document type, and intended audience. "
-                "If a document truly does not fit any category, use '未分类' (Unclassified). "
-                "Always provide a 1-sentence reasoning for each classification."
-            ),
+            temperature=0.0,
             messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a precise document classifier. Classify each document into "
+                        "exactly ONE of the provided categories. Consider: main topic, "
+                        "key terminology, document type, and intended audience. "
+                        "If a document truly does not fit any category, use '未分类' (Unclassified). "
+                        "Always provide a 1-sentence reasoning for each classification."
+                    ),
+                },
                 {
                     "role": "user",
                     "content": (
                         f"Categories: {category_list}\n\n"
                         f"Classify each document below:\n\n{doc_text}"
                     ),
-                }
+                },
             ],
-            output_config={
-                "format": {
-                    "type": "json_schema",
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "classifications",
                     "schema": CLASSIFICATION_SCHEMA,
-                }
+                },
             },
         )
 
-        # Parse structured output
-        result_text = response.content[0].text
+        result_text = response.choices[0].message.content
         parsed = json.loads(result_text)
         return parsed.get("classifications", [])

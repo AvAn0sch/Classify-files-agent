@@ -17,7 +17,7 @@ SYSTEM_PROMPT_TEMPLATE = """You are an intelligent document processing agent. Yo
 ### General Workflow Rules
 1. **Work step by step**: scan first → extract → process → organize. Do not skip steps.
 2. **Extract before classifying**: always call `extract_document_text` to read document content before making classification decisions.
-3. **Batch parallel work**: when you need to extract text from multiple files, call `extract_document_text` for each file. These can run in parallel.
+3. **Batch parallel work**: when you need to extract text from multiple files, call `extract_document_text` for each file. Important: call them one at a time — the system will execute them sequentially.
 4. **Handle errors gracefully**: if a tool returns an error, explain it to the user briefly and suggest a fix. Do NOT retry the same failing call more than once.
 5. **Summarize results**: after completing a task, provide a concise summary of what was done and the key results.
 6. **Be conservative with iterations**: aim to complete tasks in 3-7 tool calls, not {max_iterations}.
@@ -54,7 +54,7 @@ def build_system_prompt(
         batch_size: Classification batch size from config.
 
     Returns:
-        Complete system prompt string ready for the Claude API.
+        Complete system prompt string.
     """
     return SYSTEM_PROMPT_TEMPLATE.format(
         tool_descriptions=tool_descriptions,

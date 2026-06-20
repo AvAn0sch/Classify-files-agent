@@ -133,13 +133,14 @@ class TestToolRegistry:
         with pytest.raises(ValueError, match="already registered"):
             registry.register(FileScannerTool())
 
-    def test_claude_format(self):
-        """Registry outputs tools in Anthropic API format."""
+    def test_openai_format(self):
+        """Registry outputs tools in OpenAI function-calling format."""
         registry = ToolRegistry()
         registry.register(FileScannerTool())
 
-        tools = registry.get_claude_format()
+        tools = registry.get_openai_format()
         assert len(tools) == 1
-        assert tools[0]["name"] == "scan_folder"
-        assert "input_schema" in tools[0]
-        assert "description" in tools[0]
+        assert tools[0]["type"] == "function"
+        assert tools[0]["function"]["name"] == "scan_folder"
+        assert "parameters" in tools[0]["function"]
+        assert "description" in tools[0]["function"]

@@ -1,4 +1,4 @@
-"""Tool registry for managing available agent tools."""
+"""Tool registry for managing available agent tools — OpenAI format."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from create_agent.tools.base import BaseTool
 
 
 class ToolRegistry:
-    """Manages tool registration, lookup, and Claude-format conversion."""
+    """Manages tool registration, lookup, and OpenAI-format conversion."""
 
     def __init__(self) -> None:
         self._tools: dict[str, BaseTool] = {}
@@ -25,33 +25,22 @@ class ToolRegistry:
         self._tools[tool.name] = tool
 
     def get(self, name: str) -> BaseTool | None:
-        """Look up a tool by name.
-
-        Args:
-            name: The tool name to look up.
-
-        Returns:
-            The tool instance, or None if not found.
-        """
+        """Look up a tool by name."""
         return self._tools.get(name)
 
     def list_tools(self) -> list[BaseTool]:
-        """Return all registered tools, sorted alphabetically by name.
-
-        Sorting ensures deterministic serialization for prompt caching.
-        """
+        """Return all registered tools, sorted alphabetically by name."""
         return sorted(self._tools.values(), key=lambda t: t.name)
 
-    def get_claude_format(self) -> list[dict]:
-        """Return all registered tools in Anthropic API format."""
-        return [t.to_claude_format() for t in self.list_tools()]
+    def get_openai_format(self) -> list[dict]:
+        """Return all registered tools in OpenAI function-calling format."""
+        return [t.to_openai_format() for t in self.list_tools()]
 
     def get_tool_descriptions(self) -> str:
         """Generate a formatted string describing all tools for the system prompt."""
         lines = []
         for tool in self.list_tools():
             lines.append(f"- **{tool.name}**: {tool.description}")
-            # Include parameter info from schema
             props = tool.input_schema.get("properties", {})
             required = tool.input_schema.get("required", [])
             if props:

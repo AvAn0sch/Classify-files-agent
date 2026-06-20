@@ -40,25 +40,43 @@ def _resolve_dict(obj: object) -> object:
     return obj
 
 
+def _project_root() -> Path:
+    """Return the project root directory (parent of the src/create_agent package)."""
+    this_file = Path(__file__).resolve()
+    # __file__ is at src/create_agent/config/loader.py
+    # Go up 3 levels to reach the project root
+    return this_file.parent.parent.parent.parent
+
+
 def _find_config(config_path: str | None = None) -> Path:
-    """Find config file: explicit path > ./config.yaml > ~/.create-agent/config.yaml."""
+    """Find config file: explicit path > ./config.yaml > project root > ~/.create-agent/."""
     if config_path:
         path = Path(config_path)
         if path.exists():
             return path
         raise FileNotFoundError(f"Config file not found: {config_path}")
 
+    # 1. Current working directory
     cwd_config = Path("config.yaml")
     if cwd_config.exists():
         return cwd_config
 
+    # 2. Project root directory (where pyproject.toml lives)
+    root_config = _project_root() / "config.yaml"
+    if root_config.exists():
+        return root_config
+
+    # 3. User home directory
     home_config = Path.home() / ".create-agent" / "config.yaml"
     if home_config.exists():
         return home_config
 
     raise FileNotFoundError(
-        "No config.yaml found in current directory or ~/.create-agent/. "
-        "Run 'create-agent --help' for setup instructions."
+        "No config.yaml found. Place it in one of:\n"
+        "  - Current directory\n"
+        f"  - Project root: {_project_root()}\n"
+        "  - ~/.create-agent/config.yaml\n"
+        "Copy config.example.yaml to config.yaml and set your API keys."
     )
 
 

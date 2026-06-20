@@ -1,4 +1,4 @@
-"""Tests for the Agent core loop."""
+"""Tests for the Agent core loop — OpenAI-compatible."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from create_agent.agent.core import Agent, AgentResult
+from create_agent.agent.core import Agent
 from create_agent.tools.base import BaseTool, ToolResult
 from create_agent.tools.registry import ToolRegistry
 
@@ -34,47 +34,48 @@ class MockScanTool(BaseTool):
         return ToolResult.ok('{"folder": "/test", "files": ["a.docx", "b.pdf"]}')
 
 
-def make_text_block(text: str):
-    """Create a mock text content block."""
-    block = MagicMock()
-    block.type = "text"
-    block.text = text
-    return block
+def make_choice(finish_reason: str, content: str | None = None, tool_calls: list | None = None):
+    """Create a mock OpenAI choice with message."""
+    choice = MagicMock()
+    choice.finish_reason = finish_reason
+
+    msg = MagicMock()
+    msg.content = content
+    msg.tool_calls = tool_calls or []
+    choice.message = msg
+    return choice
 
 
-def make_tool_use_block(name: str, input_data: dict, tool_id: str = "toolu_001"):
-    """Create a mock tool_use content block."""
-    block = MagicMock()
-    block.type = "tool_use"
-    block.name = name
-    block.input = input_data
-    block.id = tool_id
-    return block
+def make_tool_call(tool_id: str, name: str, arguments: str):
+    """Create a mock tool call object."""
+    tc = MagicMock()
+    tc.id = tool_id
+    tc.function.name = name
+    tc.function.arguments = arguments
+    return tc
 
 
-def make_mock_response(stop_reason: str, content_blocks: list):
-    """Create a mock Anthropic API response."""
-    response = MagicMock()
-    response.stop_reason = stop_reason
-    response.content = content_blocks
-    return response
+def make_response(choices: list):
+    """Create a mock OpenAI chat completion response."""
+    resp = MagicMock()
+    resp.choices = choices
+    return resp
 
 
 class TestAgentCore:
-    """Tests for the main Agent orchestration loop."""
+    """Tests for the main Agent orchestration loop (OpenAI format)."""
 
-    def test_simple_end_turn(self, mock_anthropic_client):
-        """Agent completes in one turn when Claude responds with end_turn."""
-        mock_anthropic_client.messages.create.return_value = make_mock_response(
-            stop_reason="end_turn",
-            content_blocks=[make_text_block("Here is the answer.")],
+    def test_simple_stop(self, mock_openai_client):
+        """Agent completes in one turn when LLM responds with stop."""
+        mock_openai_client.chat.completions.create.return_value = make_response(
+            [make_choice(finish_reason="stop", content="Here is the answer.")]
         )
 
         registry = ToolRegistry()
         registry.register(MockScanTool())
 
         agent = Agent(
-            client=mock_anthropic_client,
+            client=mock_openai_client,
             tools=registry,
             stream_output=False,
             verbose=False,
@@ -87,25 +88,31 @@ class TestAgentCore:
         assert result.iterations == 1
         assert result.tool_calls_made == 0
 
-    def test_tool_use_and_end(self, mock_anthropic_client):
+    def test_tool_calls_then_stop(self, mock_openai_client):
         """Agent calls a tool then finishes."""
-        # First response: tool use
-        response1 = make_mock_response(
-            stop_reason="tool_use",
-            content_blocks=[make_tool_use_block("scan_folder", {"folder": "/test"})],
+        # First response: tool_calls
+        response1 = make_response(
+            [
+                make_choice(
+                    finish_reason="tool_calls",
+                    content=None,
+                    tool_calls=[
+                        make_tool_call("call_001", "scan_folder", '{"folder": "/test"}')
+                    ],
+                )
+            ]
         )
-        # Second response: end turn
-        response2 = make_mock_response(
-            stop_reason="end_turn",
-            content_blocks=[make_text_block("Found 2 files in /test.")],
+        # Second response: stop
+        response2 = make_response(
+            [make_choice(finish_reason="stop", content="Found 2 files in /test.")]
         )
-        mock_anthropic_client.messages.create.side_effect = [response1, response2]
+        mock_openai_client.chat.completions.create.side_effect = [response1, response2]
 
         registry = ToolRegistry()
         registry.register(MockScanTool())
 
         agent = Agent(
-            client=mock_anthropic_client,
+            client=mock_openai_client,
             tools=registry,
             stream_output=False,
             verbose=False,
@@ -118,19 +125,25 @@ class TestAgentCore:
         assert result.iterations == 2
         assert "Found 2 files" in result.final_message
 
-    def test_max_iterations(self, mock_anthropic_client):
+    def test_max_iterations(self, mock_openai_client):
         """Agent stops when max_iterations is reached."""
-        response = make_mock_response(
-            stop_reason="tool_use",
-            content_blocks=[make_tool_use_block("scan_folder", {"folder": "/test"})],
+        response = make_response(
+            [
+                make_choice(
+                    finish_reason="tool_calls",
+                    tool_calls=[
+                        make_tool_call("call_001", "scan_folder", '{"folder": "/test"}')
+                    ],
+                )
+            ]
         )
-        mock_anthropic_client.messages.create.return_value = response
+        mock_openai_client.chat.completions.create.return_value = response
 
         registry = ToolRegistry()
         registry.register(MockScanTool())
 
         agent = Agent(
-            client=mock_anthropic_client,
+            client=mock_openai_client,
             tools=registry,
             max_iterations=3,
             stream_output=False,
@@ -138,49 +151,68 @@ class TestAgentCore:
         )
 
         result = agent.run("Scan")
-
         assert result.iterations == 3
 
-    def test_refusal(self, mock_anthropic_client):
-        """Agent handles safety refusals."""
-        mock_response = make_mock_response(
-            stop_reason="refusal",
-            content_blocks=[],
+    def test_length_truncation(self, mock_openai_client):
+        """Agent handles length (token limit) finish reason."""
+        mock_openai_client.chat.completions.create.return_value = make_response(
+            [make_choice(finish_reason="length", content="Partial answer...")]
         )
-        mock_response.stop_details = MagicMock()
-        mock_response.stop_details.category = "safety"
-        mock_anthropic_client.messages.create.return_value = mock_response
 
         registry = ToolRegistry()
 
         agent = Agent(
-            client=mock_anthropic_client,
+            client=mock_openai_client,
             tools=registry,
             stream_output=False,
             verbose=False,
         )
 
-        result = agent.run("Do something unsafe")
+        result = agent.run("Long query")
         assert result.iterations == 1
-        assert result.tool_calls_made == 0
+        assert "truncated" in result.final_message.lower() or "Partial" in result.final_message
 
-    def test_unknown_tool_graceful(self, mock_anthropic_client):
+    def test_content_filter(self, mock_openai_client):
+        """Agent handles content_filter finish reason."""
+        mock_openai_client.chat.completions.create.return_value = make_response(
+            [make_choice(finish_reason="content_filter", content=None)]
+        )
+
+        registry = ToolRegistry()
+
+        agent = Agent(
+            client=mock_openai_client,
+            tools=registry,
+            stream_output=False,
+            verbose=False,
+        )
+
+        result = agent.run("Blocked content")
+        assert result.iterations == 1
+        assert "Content filtered" in result.final_message
+
+    def test_unknown_tool_graceful(self, mock_openai_client):
         """Agent handles unknown tool requests gracefully."""
-        response1 = make_mock_response(
-            stop_reason="tool_use",
-            content_blocks=[make_tool_use_block("nonexistent_tool", {})],
+        response1 = make_response(
+            [
+                make_choice(
+                    finish_reason="tool_calls",
+                    tool_calls=[
+                        make_tool_call("call_001", "nonexistent_tool", "{}")
+                    ],
+                )
+            ]
         )
-        response2 = make_mock_response(
-            stop_reason="end_turn",
-            content_blocks=[make_text_block("I tried an unknown tool.")],
+        response2 = make_response(
+            [make_choice(finish_reason="stop", content="I tried an unknown tool.")]
         )
-        mock_anthropic_client.messages.create.side_effect = [response1, response2]
+        mock_openai_client.chat.completions.create.side_effect = [response1, response2]
 
         registry = ToolRegistry()
         registry.register(MockScanTool())
 
         agent = Agent(
-            client=mock_anthropic_client,
+            client=mock_openai_client,
             tools=registry,
             stream_output=False,
             verbose=False,
@@ -188,22 +220,47 @@ class TestAgentCore:
 
         result = agent.run("Use nonexistent tool")
         assert result.success
-        assert result.tool_calls_made == 1  # Still counts as a call attempt
+        assert result.tool_calls_made == 1
 
-    def test_api_error_handling(self, mock_anthropic_client):
-        """Agent handles API errors without crashing."""
-        from anthropic import APIStatusError
-
-        mock_anthropic_client.messages.create.side_effect = APIStatusError(
-            "Rate limited",
-            response=MagicMock(),
-            body={"error": {"message": "Rate limited"}},
+    def test_invalid_json_arguments(self, mock_openai_client):
+        """Agent handles tool calls with invalid JSON arguments."""
+        response1 = make_response(
+            [
+                make_choice(
+                    finish_reason="tool_calls",
+                    tool_calls=[
+                        make_tool_call("call_001", "scan_folder", "not valid json")
+                    ],
+                )
+            ]
         )
+        response2 = make_response(
+            [make_choice(finish_reason="stop", content="I fixed the error.")]
+        )
+        mock_openai_client.chat.completions.create.side_effect = [response1, response2]
+
+        registry = ToolRegistry()
+        registry.register(MockScanTool())
+
+        agent = Agent(
+            client=mock_openai_client,
+            tools=registry,
+            stream_output=False,
+            verbose=False,
+        )
+
+        result = agent.run("Test")
+        assert result.success
+        assert result.tool_calls_made == 1  # Still attempted
+
+    def test_api_error_handling(self, mock_openai_client):
+        """Agent handles API errors without crashing."""
+        mock_openai_client.chat.completions.create.side_effect = Exception("Connection failed")
 
         registry = ToolRegistry()
 
         agent = Agent(
-            client=mock_anthropic_client,
+            client=mock_openai_client,
             tools=registry,
             stream_output=False,
             verbose=False,
@@ -212,4 +269,4 @@ class TestAgentCore:
         result = agent.run("Test")
         assert not result.success
         assert result.error is not None
-        assert "Rate limited" in result.error or "API error" in result.error
+        assert "Connection failed" in result.error

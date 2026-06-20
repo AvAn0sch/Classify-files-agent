@@ -6,135 +6,133 @@ Intelligent document processing agent — classify, search, and answer questions
 
 ## Features
 
-- **📄 Document Classification** — Classify Word (.docx), PowerPoint (.pptx), and PDF files into user-defined categories using Claude AI. Automatically creates category folders and moves files.
+- **📄 Document Classification** — Classify Word (.docx), PowerPoint (.pptx), and PDF files into user-defined categories using AI. Automatically creates category folders and moves files.
 - **🔍 Web Search** — Search the web via Tavily API and get AI-synthesized answers.
 - **💬 Document Q&A** — Ask questions about your documents and get answers with source references.
 - **🤖 Agent Architecture** — Full tool-use loop with context engineering, prompt caching, and structured output.
+- **🔌 Multi-Provider** — OpenAI-compatible API standard. Works with OpenAI, DeepSeek, Qwen, Zhipu, Ollama, and more.
 
-## Installation
+## Quick Start
 
 ```bash
-# Clone and install
-cd Create-agent
+# 1. Install
+cd Classify-files-agent
 pip install -e .
 
-# Or for development
-pip install -e ".[dev]"
+# 2. Configure — copy and edit config.yaml
+cp config.example.yaml config.yaml
+
+# 3. Start
+python run.py
+```
+
+Then just type what you want in natural language:
+```
+帮我把 ./documents 里的文件按合同、报告、发票分类
+搜索最新的 AI 法规进展
+Q4 营收报告里关于成本的内容是什么？
 ```
 
 ## Configuration
 
-1. Copy the example config:
-   ```bash
-   cp config.example.yaml config.yaml
-   ```
+Edit `config.yaml` — OpenAI-compatible API standard:
 
-2. Set your API keys as environment variables:
-   ```bash
-   export ANTHROPIC_API_KEY="sk-ant-..."
-   export TAVILY_API_KEY="tvly-..."
-   ```
+```yaml
+llm:
+  base_url: https://api.deepseek.com/v1   # Change to your provider
+  api_key: sk-...                          # Your API key
+  model: deepseek-chat
+  max_tokens: 16000
+  temperature: 0.0
 
-3. (Optional) Edit `config.yaml` to customize model, batch size, etc.
+api_keys:
+  tavily: tvly-...                         # For web search
+```
 
-Configuration is loaded from (in order):
-- Explicit `--config` path
-- `./config.yaml` (current directory)
-- `~/.create-agent/config.yaml`
+### Supported LLM Providers
+
+| Provider | base_url |
+|----------|----------|
+| OpenAI | `https://api.openai.com/v1` |
+| DeepSeek | `https://api.deepseek.com/v1` |
+| Qwen (阿里云) | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| Zhipu (智谱) | `https://open.bigmodel.cn/api/paas/v4` |
+| Moonshot | `https://api.moonshot.cn/v1` |
+| Ollama (local) | `http://localhost:11434/v1` |
+| vLLM (local) | `http://localhost:8000/v1` |
+
+Config search order: `--config path` → `./config.yaml` → project root → `~/.create-agent/config.yaml`
 
 ## Usage
 
-### Classify documents
+Run the agent and chat naturally:
 
-```bash
-create-agent classify --folder ./documents --categories "Contract,Invoice,Report"
 ```
+You: 帮我把 ./documents 里的文件按合同、报告、发票分类
 
-This will:
-1. Scan the folder for .docx, .pptx, .pdf files
-2. Extract text from each document
-3. Classify each document using Claude
-4. Create category sub-folders and move files
-5. Display a summary table
+Agent: [scans folder → extracts text → classifies → moves files]
+       Classification complete:
+       | File | Category | Confidence |
+       | ...  | ...      | ...        |
 
-### Search the web
+You: 搜索 2026 年 AI 领域最重要的进展
 
-```bash
-create-agent search --query "Latest developments in AI regulation"
-create-agent search --query "Python async best practices" --max-results 3
-```
+Agent: [calls web_search → synthesizes results]
+       Here are the key AI developments in 2026...
 
-### Ask about documents
-
-```bash
-create-agent ask --folder ./reports --question "What was Q4 revenue?"
-create-agent ask --folder ./contracts --question "Which contracts expire in 2026?"
-```
-
-### Interactive chat
-
-```bash
-create-agent chat
-```
-
-Chat with the agent naturally — it can classify, search, and answer questions as needed.
-
-### Verbose mode
-
-```bash
-create-agent --verbose classify --folder ./docs --categories "Legal,HR"
+You: exit
 ```
 
 ## Project Structure
 
 ```
-src/create_agent/
-├── main.py              # CLI entry point (click)
-├── agent/
-│   ├── core.py          # Agent loop: LLM ↔ Tools orchestration
-│   ├── conversation.py  # Message history management
-│   └── prompts.py       # System prompt builder
-├── tools/
-│   ├── base.py          # Abstract BaseTool, ToolResult
-│   ├── registry.py      # Tool registration and lookup
-│   ├── file_scanner.py  # Scan folders for documents
-│   ├── text_extractor.py # Extract document text
-│   ├── classifier.py    # AI-powered classification
-│   ├── file_organizer.py # Create folders, move files
-│   ├── web_search.py    # Tavily web search
-│   └── document_qa.py   # Document question answering
-├── extraction/
-│   ├── dispatcher.py    # Route by file extension
-│   ├── docx_extractor.py
-│   ├── pptx_extractor.py
-│   └── pdf_extractor.py
-├── config/
-│   ├── loader.py        # YAML loading + env var resolution
-│   └── models.py        # Pydantic config schema
-└── cli/
-    ├── commands.py      # Click commands
-    └── display.py       # Rich console output
+Classify-files-agent/
+├── run.py                 # Quick launcher
+├── config.yaml            # Your configuration
+├── config.example.yaml    # Annotated template
+├── src/create_agent/
+│   ├── main.py            # Entry point
+│   ├── agent/
+│   │   ├── core.py        # Agent loop: LLM ↔ Tools
+│   │   ├── conversation.py
+│   │   └── prompts.py     # System prompt builder
+│   ├── tools/
+│   │   ├── base.py        # Abstract BaseTool
+│   │   ├── registry.py    # Tool registration
+│   │   ├── file_scanner.py
+│   │   ├── text_extractor.py
+│   │   ├── classifier.py  # AI classification (structured output)
+│   │   ├── file_organizer.py
+│   │   ├── web_search.py  # Tavily search
+│   │   └── document_qa.py # Document Q&A
+│   ├── extraction/
+│   │   ├── dispatcher.py
+│   │   ├── docx_extractor.py
+│   │   ├── pptx_extractor.py
+│   │   └── pdf_extractor.py
+│   ├── config/
+│   │   ├── loader.py
+│   │   └── models.py
+│   └── cli/
+│       ├── commands.py    # Agent init + chat loop
+│       └── display.py     # Rich terminal output
+└── tests/
 ```
 
 ## How It Works
 
 The agent follows a **tool-use loop**:
 
-1. User provides a task → sent to Claude with available tools
-2. Claude decides which tool(s) to call
-3. Agent executes tools, returns results to Claude
-4. Claude may call more tools or provide a final answer
-5. Loop continues until Claude finishes or max iterations reached
+1. User sends a message → sent to LLM with available tools
+2. LLM decides whether to respond directly or call a tool
+3. Agent executes tool calls, returns results to LLM
+4. Loop continues until LLM provides a final answer
 
 ### Tool Architecture
 
-Each tool extends `BaseTool` and defines:
-- `name` — unique identifier
-- `description` — what it does AND when to use it
-- `input_schema` — JSON Schema for parameters
-- `execute()` — runs the tool, returns `ToolResult`
+Each tool extends `BaseTool` and defines `name`, `description`, `input_schema`, and `execute()`.
 
-Two tools use the **hybrid pattern** — they appear as normal tools to the agent but make internal Claude API calls:
+Two tools use the **hybrid pattern** — they appear as normal tools to the agent but make internal LLM API calls:
 - `classify_documents` uses **structured output** (JSON schema) for guaranteed format
 - `search_documents` makes an internal call to answer questions from document context
 
@@ -146,12 +144,11 @@ pytest tests/ -v
 
 ## Dependencies
 
-- `anthropic` — Claude API client
+- `openai` — OpenAI-compatible API client
 - `python-docx` — Word document extraction
 - `python-pptx` — PowerPoint extraction
 - `pdfplumber` — PDF text extraction
 - `tavily-python` — Web search
-- `click` — CLI framework
 - `rich` — Terminal output
 - `pydantic` — Configuration validation
 - `pyyaml` — Configuration parsing

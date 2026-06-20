@@ -4,34 +4,47 @@
 # API keys use ${ENV_VAR} syntax to read from environment variables.
 # You can also put the key directly (not recommended for security).
 
-# ── LLM Provider ────────────────────────────────────
+# ── LLM Provider (OpenAI-compatible standard) ───────
 llm:
-  provider: anthropic              # Currently only "anthropic" is supported
-  model: claude-opus-4-8           # Claude model to use
-  # Other good options: claude-sonnet-4-6 (faster/cheaper), claude-fable-5 (most capable)
-  max_tokens: 16000                # Max output tokens per response
-  thinking:                        # Extended thinking config (Opus 4.8+)
-    type: adaptive                 # "adaptive" lets Claude decide when to think
-  output_config:
-    effort: high                   # low | medium | high | xhigh | max
+  # Base URL for the API endpoint.
+  # Change this to use different providers:
+  #   OpenAI:           https://api.openai.com/v1
+  #   DeepSeek:         https://api.deepseek.com/v1
+  #   Qwen (阿里云):     https://dashscope.aliyuncs.com/compatible-mode/v1
+  #   Zhipu (智谱):     https://open.bigmodel.cn/api/paas/v4
+  #   Moonshot (月之暗面): https://api.moonshot.cn/v1
+  #   vLLM (本地):       http://localhost:8000/v1
+  #   Ollama (本地):     http://localhost:11434/v1
+  base_url: https://api.openai.com/v1
+
+  # API key — use ${OPENAI_API_KEY} to read from environment
+  api_key: ${OPENAI_API_KEY}
+
+  # Model name — any model supported by the provider
+  model: gpt-4o
+
+  # Maximum output tokens per response
+  max_tokens: 16000
+
+  # Temperature (0.0 = deterministic, 1.0 = creative)
+  temperature: 0.0
 
 # ── API Keys ────────────────────────────────────────
-# Set these as environment variables and reference them with ${VAR_NAME}
+# Set these as environment variables and reference with ${VAR_NAME}
 api_keys:
-  anthropic: ${ANTHROPIC_API_KEY}  # Required: your Anthropic API key
-  tavily: ${TAVILY_API_KEY}        # Required for web search: your Tavily API key
+  openai: ${OPENAI_API_KEY}        # Required: your LLM API key
+  tavily: ${TAVILY_API_KEY}        # Required for web search
 
 # ── Tool Configuration ──────────────────────────────
 tools:
   web_search:
     enabled: true                  # Set to false to disable web search
     max_results: 5                 # Default results per search (1-20)
-    include_domains: []            # Restrict search to these domains (optional)
-    exclude_domains: []            # Block these domains from results (optional)
+    include_domains: []            # Restrict search to these domains
+    exclude_domains: []            # Block these domains from results
 
   classification:
-    batch_size: 10                 # Documents per structured-output call
-    confidence_threshold: low      # Minimum confidence to auto-classify
+    batch_size: 10                 # Documents per classification call
     max_chars_per_doc: 8000        # Truncate document text for classification
 
 # ── Extraction Settings ─────────────────────────────

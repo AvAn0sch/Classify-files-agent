@@ -1,8 +1,7 @@
-"""Shared test fixtures."""
+"""Shared test fixtures — OpenAI-compatible."""
 
 from __future__ import annotations
 
-import os
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -18,8 +17,8 @@ def temp_dir():
 
 
 @pytest.fixture
-def mock_anthropic_client():
-    """Create a mock Anthropic client."""
+def mock_openai_client():
+    """Create a mock OpenAI client."""
     return MagicMock()
 
 
@@ -28,12 +27,14 @@ def sample_config_dict():
     """Sample config dictionary for testing."""
     return {
         "llm": {
-            "provider": "anthropic",
-            "model": "claude-opus-4-8",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "test-key",
+            "model": "gpt-4o",
             "max_tokens": 16000,
+            "temperature": 0.0,
         },
         "api_keys": {
-            "anthropic": "test-key",
+            "openai": "test-key",
             "tavily": "test-tavily-key",
         },
         "tools": {

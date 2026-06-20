@@ -1,38 +1,37 @@
-"""Pydantic models for configuration validation."""
+"""Pydantic models for configuration validation — OpenAI-compatible standard."""
 
 from __future__ import annotations
-
-from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
-class ThinkingConfig(BaseModel):
-    """Extended thinking configuration."""
-
-    type: Literal["adaptive", "enabled", "disabled"] = "adaptive"
-
-
-class OutputConfig(BaseModel):
-    """Output configuration for structured output."""
-
-    effort: Literal["low", "medium", "high", "xhigh", "max"] = "high"
-
-
 class LLMConfig(BaseModel):
-    """LLM provider configuration."""
+    """LLM provider configuration using OpenAI-compatible API standard.
 
-    provider: Literal["anthropic"] = "anthropic"
-    model: str = "claude-opus-4-8"
-    max_tokens: int = Field(default=16000, ge=1, le=64000)
-    thinking: ThinkingConfig = Field(default_factory=ThinkingConfig)
-    output_config: OutputConfig = Field(default_factory=OutputConfig)
+    Works with OpenAI, DeepSeek, Qwen, vLLM, Ollama, and any other
+    provider that implements the OpenAI chat/completions API format.
+    """
+
+    base_url: str = Field(
+        default="https://api.openai.com/v1",
+        description="OpenAI-compatible API endpoint. Change to use other providers.",
+    )
+    api_key: str = Field(
+        default="",
+        description="API key. Use ${OPENAI_API_KEY} in config.yaml.",
+    )
+    model: str = Field(
+        default="gpt-4o",
+        description="Model name (e.g., gpt-4o, deepseek-chat, qwen-max).",
+    )
+    max_tokens: int = Field(default=16000, ge=1, le=128000)
+    temperature: float = Field(default=0.0, ge=0.0, le=2.0)
 
 
 class ApiKeys(BaseModel):
-    """API key configuration. Values are resolved from environment variables."""
+    """API key configuration. Values resolved from environment variables."""
 
-    anthropic: str = ""
+    openai: str = ""
     tavily: str = ""
 
 
@@ -49,7 +48,6 @@ class ClassificationConfig(BaseModel):
     """Classification tool configuration."""
 
     batch_size: int = Field(default=10, ge=1, le=50)
-    confidence_threshold: Literal["low", "medium", "high"] = "low"
     max_chars_per_doc: int = Field(default=8000, ge=100, le=100000)
 
 
@@ -63,7 +61,7 @@ class ToolConfig(BaseModel):
 class ExtractionConfig(BaseModel):
     """Document extraction configuration."""
 
-    pdf_library: Literal["pdfplumber", "pymupdf"] = "pdfplumber"
+    pdf_library: str = "pdfplumber"
     max_chars_per_doc: int = Field(default=50000, ge=100, le=500000)
     supported_extensions: list[str] = Field(
         default_factory=lambda: [".docx", ".pptx", ".pdf"]

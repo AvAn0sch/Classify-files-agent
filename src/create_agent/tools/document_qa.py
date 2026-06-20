@@ -2,7 +2,7 @@
 
 This tool is a HYBRID: from the agent's perspective it's a normal tool,
 but internally it extracts text from all documents, concatenates them into
-a context window, and calls Claude to answer the user's question.
+a context window, and calls the LLM to answer the user's question.
 """
 
 from __future__ import annotations
@@ -15,20 +15,20 @@ from create_agent.extraction.dispatcher import extract_text
 from create_agent.tools.base import BaseTool, ToolResult
 
 if TYPE_CHECKING:
-    import anthropic
+    from openai import OpenAI
 
 
 class DocumentQATool(BaseTool):
-    """Answer questions about document content using Claude.
+    """Answer questions about document content using LLM.
 
     Scans a folder for documents, extracts their text, concatenates them
-    into a context window, and calls Claude to answer the user's question
+    into a context window, and calls the LLM to answer the user's question
     with file references.
     """
 
     def __init__(
         self,
-        client: "anthropic.Anthropic",
+        client: "OpenAI",
         model: str,
         supported_extensions: list[str] | None = None,
         max_chars_per_doc: int = 50000,
@@ -120,11 +120,10 @@ class DocumentQATool(BaseTool):
                 f"Errors: {', '.join(extraction_errors)}"
             )
 
-        # Concatenate and query
         combined_text = "\n\n".join(doc_texts)
 
-        # Truncate if too long (leaving room for system prompt + question + answer)
-        max_context = 180000  # ~180K chars to leave room for Claude's max context
+        # Truncate if too long (leave room for system prompt + question + answer)
+        max_context = 180000
         if len(combined_text) > max_context:
             combined_text = (
                 combined_text[:max_context]
@@ -132,16 +131,20 @@ class DocumentQATool(BaseTool):
             )
 
         try:
-            response = self._client.messages.create(
+            response = self._client.chat.completions.create(
                 model=self._model,
                 max_tokens=4000,
-                system=(
-                    "You are a precise document analyst. Answer questions based "
-                    "ONLY on the provided document content. If the answer cannot "
-                    "be found in the documents, say so clearly. Always cite which "
-                    "document(s) your answer comes from. Be concise and factual."
-                ),
+                temperature=0.0,
                 messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a precise document analyst. Answer questions based "
+                            "ONLY on the provided document content. If the answer cannot "
+                            "be found in the documents, say so clearly. Always cite which "
+                            "document(s) your answer comes from. Be concise and factual."
+                        ),
+                    },
                     {
                         "role": "user",
                         "content": (
@@ -150,11 +153,11 @@ class DocumentQATool(BaseTool):
                             f"Answer the question based ONLY on the documents above. "
                             f"Include document name references."
                         ),
-                    }
+                    },
                 ],
             )
 
-            answer = response.content[0].text
+            answer = response.choices[0].message.content
 
             return ToolResult.ok(
                 json.dumps(

@@ -1,23 +1,20 @@
-"""Agent core — the main LLM↔Tool orchestration loop.
+"""Agent core — the main LLM↔Tool orchestration loop (OpenAI-compatible).
 
-This implements a manual agentic loop (not the SDK's tool_runner) for full
-control over tool execution, error handling, logging, and streaming.
+Implements a manual agentic loop for full control over tool execution,
+error handling, and streaming.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import Any
 
-import anthropic
+from openai import OpenAI
 
 from create_agent.agent.conversation import ConversationManager
 from create_agent.agent.prompts import build_system_prompt
 from create_agent.tools.registry import ToolRegistry
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass
@@ -32,24 +29,26 @@ class AgentResult:
 
 
 class Agent:
-    """Orchestrates Claude API ↔ Tool interactions.
+    """Orchestrates LLM ↔ Tool interactions via OpenAI-compatible API.
 
-    The agent receives a user task, sends it to Claude with available tools,
-    executes tools that Claude requests, and continues until Claude provides
+    The agent receives a user task, sends it to the LLM with available tools,
+    executes tools that the LLM requests, and continues until the LLM provides
     a final answer or the iteration limit is reached.
 
     Usage:
-        agent = Agent(client, tools, config)
+        client = OpenAI(base_url="...", api_key="...")
+        agent = Agent(client, tools, model="gpt-4o")
         result = agent.run("Classify documents in ./docs into: Legal, HR, Finance")
         print(result.final_message)
     """
 
     def __init__(
         self,
-        client: anthropic.Anthropic,
+        client: OpenAI,
         tools: ToolRegistry,
-        model: str = "claude-opus-4-8",
+        model: str = "gpt-4o",
         max_tokens: int = 16000,
+        temperature: float = 0.0,
         max_iterations: int = 20,
         verbose: bool = False,
         stream_output: bool = True,
@@ -58,6 +57,7 @@ class Agent:
         self._tools = tools
         self._model = model
         self._max_tokens = max_tokens
+        self._temperature = temperature
         self._max_iterations = max_iterations
         self._verbose = verbose
         self._stream_output = stream_output
@@ -71,7 +71,6 @@ class Agent:
         Returns:
             AgentResult with the final output and execution metadata.
         """
-        # Build conversation
         system_prompt = build_system_prompt(
             tool_descriptions=self._tools.get_tool_descriptions(),
             max_iterations=self._max_iterations,
@@ -83,6 +82,7 @@ class Agent:
         tool_calls_made = 0
         iterations = 0
         final_text: list[str] = []
+        tools_format = self._tools.get_openai_format()
 
         # --- Main agent loop ---
         while iterations < self._max_iterations:
@@ -92,95 +92,104 @@ class Agent:
                 print(f"\n[Agent] Iteration {iterations}/{self._max_iterations}")
 
             try:
-                response = self._client.messages.create(
+                response = self._client.chat.completions.create(
                     model=self._model,
                     max_tokens=self._max_tokens,
-                    system=[
-                        {
-                            "type": "text",
-                            "text": system_prompt,
-                            "cache_control": {"type": "ephemeral"},
-                        }
-                    ],
-                    tools=self._tools.get_claude_format(),
+                    temperature=self._temperature,
                     messages=conversation.get_messages(),
-                )
-            except anthropic.APIStatusError as e:
-                return AgentResult(
-                    success=False,
-                    iterations=iterations,
-                    tool_calls_made=tool_calls_made,
-                    error=f"API error (status {e.status_code}): {e.message}",
+                    tools=tools_format if tools_format else None,
                 )
             except Exception as e:
                 return AgentResult(
                     success=False,
                     iterations=iterations,
                     tool_calls_made=tool_calls_made,
-                    error=f"Unexpected error: {e}",
+                    error=f"API error: {e}",
                 )
 
-            stop_reason = response.stop_reason
-            content_blocks = response.content
+            choice = response.choices[0]
+            finish_reason = choice.finish_reason
+            message = choice.message
 
             if self._verbose:
-                print(f"[Agent] stop_reason: {stop_reason}")
-                print(f"[Agent] content blocks: {len(content_blocks)}")
+                print(f"[Agent] finish_reason: {finish_reason}")
 
-            # --- Handle stop reasons ---
-            if stop_reason == "end_turn":
-                # Claude finished naturally
-                text = self._extract_text(content_blocks)
-                if text:
-                    final_text.append(text)
-                conversation.add_assistant_response(content_blocks)
+            # --- Handle finish reasons ---
+            if finish_reason == "stop":
+                # LLM finished naturally
+                content = message.content or ""
+                if content and self._stream_output:
+                    print(content)
+                final_text.append(content)
+                conversation.add_assistant_message(
+                    {"role": "assistant", "content": content}
+                )
                 break
 
-            elif stop_reason == "tool_use":
-                # Claude wants to use tools
-                # First, extract and show any text
-                text = self._extract_text(content_blocks)
-                if text and self._stream_output:
-                    print(text)
+            elif finish_reason == "tool_calls":
+                # LLM wants to use tools
+                content = message.content or ""
+                if content and self._stream_output:
+                    print(content)
 
-                # Add assistant response to history
-                conversation.add_assistant_response(content_blocks)
+                tool_calls = message.tool_calls or []
 
-                # Execute all tool_use blocks
-                tool_results: list[dict] = []
-                for block in content_blocks:
-                    if getattr(block, "type", None) == "tool_use":
-                        tool_results.append(self._execute_tool_block(block))
-                        tool_calls_made += 1
+                # Store assistant message with tool_calls
+                conversation.add_assistant_message(
+                    {
+                        "role": "assistant",
+                        "content": content,
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments,
+                                },
+                            }
+                            for tc in tool_calls
+                        ],
+                    }
+                )
 
-                # Feed tool results back
-                if tool_results:
-                    conversation.add_tool_results(tool_results)
+                # Execute each tool call
+                for tc in tool_calls:
+                    result = self._execute_tool_call(tc)
+                    conversation.add_tool_result(
+                        tool_call_id=tc.id,
+                        tool_name=tc.function.name,
+                        content=result,
+                    )
+                    tool_calls_made += 1
 
-            elif stop_reason == "refusal":
-                # Safety refusal
-                refusal_details = getattr(response, "stop_details", {})
-                category = refusal_details.get("category", "unknown")
-                msg = f"[Refused: {category}] Claude declined this request for safety reasons."
-                final_text.append(msg)
+            elif finish_reason == "length":
+                # Output truncated
+                content = message.content or ""
+                if content:
+                    final_text.append(content)
+                    final_text.append(
+                        "\n[Warning: response was truncated due to token limit]"
+                    )
+                conversation.add_assistant_message(
+                    {"role": "assistant", "content": content}
+                )
                 break
 
-            elif stop_reason == "max_tokens":
-                # Output truncated — warn but use what we have
-                text = self._extract_text(content_blocks)
-                if text:
-                    final_text.append(text)
-                    final_text.append("\n[Warning: response was truncated due to token limit]")
-                conversation.add_assistant_response(content_blocks)
+            elif finish_reason == "content_filter":
+                # Content filtered by provider
+                final_text.append(
+                    "[Content filtered: the request was blocked by the provider's content filter.]"
+                )
                 break
 
             else:
-                # Unknown stop reason
+                # Unknown finish reason — capture what we have and stop
                 if self._verbose:
-                    print(f"[Agent] Unknown stop_reason: {stop_reason}")
-                text = self._extract_text(content_blocks)
-                if text:
-                    final_text.append(text)
+                    print(f"[Agent] Unknown finish_reason: {finish_reason}")
+                content = message.content or ""
+                if content:
+                    final_text.append(content)
                 break
 
         # --- Post-loop ---
@@ -197,38 +206,37 @@ class Agent:
             tool_calls_made=tool_calls_made,
         )
 
-    def _execute_tool_block(self, tool_use_block: Any) -> dict:
-        """Execute a single tool_use block and return the tool_result dict."""
-        tool_name = getattr(tool_use_block, "name", "unknown")
-        tool_id = getattr(tool_use_block, "id", "unknown")
-        tool_input = getattr(tool_use_block, "input", {})
+    def _execute_tool_call(self, tool_call: Any) -> str:
+        """Execute a single tool call and return the result string."""
+        func = tool_call.function
+        tool_name = func.name
+
+        # Parse arguments JSON
+        try:
+            tool_input = json.loads(func.arguments)
+        except json.JSONDecodeError:
+            return f"Error: invalid JSON arguments: {func.arguments}"
 
         if self._verbose:
-            print(f"\n[Tool] {tool_name}({json.dumps(tool_input, ensure_ascii=False)[:120]})")
+            print(
+                f"\n[Tool] {tool_name}({json.dumps(tool_input, ensure_ascii=False)[:120]})"
+            )
 
         tool = self._tools.get(tool_name)
 
         if tool is None:
-            content = f"Error: Unknown tool '{tool_name}'. Available: {[t.name for t in self._tools.list_tools()]}"
-            return {"tool_use_id": tool_id, "content": content}
+            return (
+                f"Error: Unknown tool '{tool_name}'. "
+                f"Available: {[t.name for t in self._tools.list_tools()]}"
+            )
 
         try:
             result = tool.execute(tool_input)
             if self._verbose and result.is_error:
                 print(f"[Tool] ERROR: {result.content[:200]}")
-            return {"tool_use_id": tool_id, "content": result.content}
+            return result.content
         except Exception as e:
             error_msg = f"Tool execution failed: {e}"
             if self._verbose:
                 print(f"[Tool] EXCEPTION: {error_msg}")
-            return {"tool_use_id": tool_id, "content": error_msg}
-
-    @staticmethod
-    def _extract_text(content_blocks: list) -> str:
-        """Extract text from content blocks for display."""
-        texts = []
-        for block in content_blocks:
-            block_type = getattr(block, "type", None)
-            if block_type == "text":
-                texts.append(getattr(block, "text", ""))
-        return "\n".join(texts)
+            return error_msg
